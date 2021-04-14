@@ -21,40 +21,40 @@ def deco_print(msg):
     print(f"==================>     {msg}")
 
 
-def fetch_all_data(date=None):
-    """Calls fetch_ticker_data to download new data of all five indexes using either a specified date or today."""
-    if date is not None:
-        curr_date = datetime.strptime(date, '%Y-%m-%d')
-    else:
-        curr_date = datetime.today()
-    date_five_years = curr_date - relativedelta(years=5)
-    curr_date = curr_date.strftime('%Y-%m-%d')
-    date_five_years = date_five_years.strftime('%Y-%m-%d')
+def find_nearest(array, value):
+    """Finds nearest index to value in array."""
+    array = pd.to_datetime(array).dt.date
+    value = datetime.strptime(value, '%Y-%m-%d').date()
+    idx = np.argmin(np.abs(array - value))
+    return idx
 
+
+def fetch_all_data(start_date, end_date):
+    """Calls fetch_ticker_data to download new data of all five indexes using either a specified date or today."""
     all_datasets = []
     for tick in all_tickers:
-        deco_print("ticker = " + ticker_names[tick] + ", start date = " + date_five_years + ", end date = " + curr_date)
-        if ticker_names[tick] + "_" + curr_date + '.csv' in listdir("data"):
-            deco_print("data already exists, loading previous data")
-            df = pd.read_csv("data/" + ticker_names[tick] + "_" + curr_date + '.csv')
+        if f"{ticker_names[tick]}.csv" in listdir("data"):
+            df = pd.read_csv(f"data/{ticker_names[tick]}.csv")
+            if df.Date[0] > start_date or df.Date[len(df) - 1] < end_date:
+                df = pdr.get_data_yahoo(tick, start=start_date, end=end_date)
+            else:
+                df = df.loc[find_nearest(df.Date, start_date): find_nearest(df.Date, end_date)]
+            df.to_csv(f"data/{ticker_names[tick]}.csv")
         else:
-            # df = pdr.get_data_yahoo(tick, start=date_five_years, end=curr_date)
-            with open("training_data.txt", "w") as f:
-                f.write(curr_date)
-            while ticker_names[tick] + "_" + curr_date + '.csv' not in listdir("data"):
-                sleep(0.1)
-            df = pd.read_csv("data/" + ticker_names[tick] + "_" + curr_date + ".csv")
+            df = pdr.get_data_yahoo(tick, start=start_date, end=end_date)
+            df.to_csv(f"data/{ticker_names[tick]}.csv")
+        df = pd.read_csv(f"data/{ticker_names[tick]}.csv")  # some weird error when adding new dataset doesn't work
         all_datasets.append(df)
     return all_datasets
 
 
 def calculate_volume_weighted_price(n, df):
     """Calculates the volume weighted average price for a stock of the last n days."""
-    df["volume"] = df["volume"].replace(0, 1)
-    df['Cum_Vol'] = df['volume'].cumsum()
-    df['Cum_Vol_Price'] = (df['volume'] * (df['high'] + df['low'] + df['close']) / 3).cumsum()
+    df["Volume"] = df["Volume"].replace(0, 1)
+    df['Cum_Vol'] = df['Volume'].cumsum()
+    df['Cum_Vol_Price'] = (df['Volume'] * (df['High'] + df['Low'] + df['Close']) / 3).cumsum()
     df['VWAP'] = df['Cum_Vol_Price'] / df['Cum_Vol']
-    df['log_return'] = np.log1p(df["close"].pct_change())
+    df['log_return'] = np.log1p(df["Close"].pct_change())
     df["Vol"] = df['log_return'].rolling(window=n).std() * np.sqrt(n)
     return df
 
@@ -72,40 +72,36 @@ def fit_line(n, df, name):
     return df
 
 
-def build_datasets(n, restart=False, alpha=0.01, date=None):
+def build_datasets(n, N, alpha, start_date, end_date):
     """Builds the training dataset for the model."""
-    if restart:
-        deco_print("building dataset, restart is flagged")
-        data_list = fetch_all_data(date)
-        for i in range(len(data_list)):
-            data_list[i] = calculate_volume_weighted_price(n, data_list[i])
-            data_list[i] = fit_line(n, data_list[i], ticker_names[all_tickers[i]])
-            if ticker_names[all_tickers[i]] != "IVV":
-                data_list[i] = data_list[i][
-                    ["date", ticker_names[all_tickers[i]] + "_a", ticker_names[all_tickers[i]] + "_b"]]
-            else:
-                data_list[i] = data_list[i][
-                    ["date", "high", "low", "close", "Vol", ticker_names[all_tickers[i]] + "_a",
-                     ticker_names[all_tickers[i]] + "_b"]]
-            if i > 0:
-                data_list[i] = data_list[i].merge(data_list[i - 1], on="date", how="right")
+    deco_print("building dataset. checking for existing files")
+    data_list = fetch_all_data(start_date, end_date)
+    for i in range(len(data_list)):
+        data_list[i] = calculate_volume_weighted_price(N, data_list[i])
+        data_list[i] = fit_line(N, data_list[i], ticker_names[all_tickers[i]])
+        if ticker_names[all_tickers[i]] != "IVV":
+            data_list[i] = data_list[i][
+                ["Date", ticker_names[all_tickers[i]] + "_a", ticker_names[all_tickers[i]] + "_b"]]
+        else:
+            data_list[i] = data_list[i][
+                ["Date", "High", "Low", "Close", "Vol", ticker_names[all_tickers[i]] + "_a",
+                 ticker_names[all_tickers[i]] + "_b"]]
+        if i > 0:
+            data_list[i] = data_list[i].merge(data_list[i - 1], on="Date", how="right")
         # collapse full_data list into singular dataset
-        full_data = data_list[len(data_list) - 1]
-        full_data["low"] = full_data["low"].shift(-1)
-        full_data["high"] = full_data["high"].shift(-1)
-        full_data["next_high"] = full_data["close"] * (1 + alpha)
-        full_data["next_low"] = full_data["close"] * (1 - alpha)
-        full_data["isHigh"] = 1 * (full_data.next_high < full_data.high)
-        full_data["isLow"] = 1 * (full_data.low < full_data.next_low)
-        full_data = full_data.iloc[n:len(full_data) - 1]
-        deco_print("number of signal 'a': " + str(np.sum(full_data.isHigh)))
-        deco_print("number of signal 'b': " + str(np.sum(full_data.isLow)))
-        full_data = full_data[
-            ["DJ_a", 'DJ_b', 'URTH_a', 'URTH_b', 'QQQ_a', 'QQQ_b', 'Vol', 'IVV_a', 'IVV_b', 'isHigh', 'isLow']]
-        full_data.to_csv("data/full_data_alpha_" + str(alpha) + date + ".csv", index=False)
-    else:
-        deco_print("loading dataset")
-        full_data = pd.read_csv("data/full_data_alpha_" + str(alpha) + date + ".csv")
+    full_data = data_list[len(data_list) - 1]
+    full_data["Low"] = full_data["Low"][::-1].shift(-1).rolling(n).max()[::-1]
+    # forward rolling isn't implemented in 'rolling'
+    full_data["High"] = full_data["High"][::-1].shift(-1).rolling(n).min()[::-1]
+    full_data["next_high"] = full_data["Close"] * (1 + alpha)
+    full_data["next_low"] = full_data["Close"] * (1 - alpha)
+    full_data["isHigh"] = 1 * (full_data.next_high < full_data.High)
+    full_data["isLow"] = 1 * (full_data.Low < full_data.next_low)
+    full_data = full_data.iloc[N:len(full_data) - 1 - n]
+    deco_print("number of signal 'a': " + str(np.sum(full_data.isHigh)))
+    deco_print("number of signal 'b': " + str(np.sum(full_data.isLow)))
+    full_data = full_data[
+        ["DJ_a", 'DJ_b', 'URTH_a', 'URTH_b', 'QQQ_a', 'QQQ_b', 'Vol', 'IVV_a', 'IVV_b', 'isHigh', 'isLow']]
     train_high = full_data.drop("isLow", axis=1)
     train_low = full_data.drop("isHigh", axis=1)
     return train_high, train_low
@@ -113,7 +109,8 @@ def build_datasets(n, restart=False, alpha=0.01, date=None):
 
 def split_data(df, col, split_ratio=0.2):
     """Splits dataset off a split."""
-    X_train, X_test, Y_train, Y_test = train_test_split(df.drop(col, axis=1).values, df[col].values, test_size=split_ratio, random_state=1, stratify=df[col].values)
+    X_train, X_test, Y_train, Y_test = train_test_split(df.drop(col, axis=1).values, df[col].values,
+                                                        test_size=split_ratio, random_state=1, stratify=df[col].values)
     # split_index = int(len(df) * split_ratio)
     # test_set = df.iloc[:split_index].drop(col, axis=1).values
     # y_test = df.iloc[:split_index][col].values.astype(np.float)
@@ -128,34 +125,30 @@ def train_models(train_high, train_low):
     train_high, train_low = shuffle(train_high, train_low, random_state=0)
     X_train_h, X_test_h, y_train_h, y_test_h = split_data(train_high, 'isHigh')
     X_train_l, X_test_l, y_train_l, y_test_l = split_data(train_low, 'isLow')
-    high_fit = LogisticRegressionCV(random_state=0, max_iter=10000, class_weight="balanced").fit(X_train_h, y_train_h)
+    high_fit = LogisticRegressionCV(cv=7, random_state=0, max_iter=10000, class_weight="balanced").fit(X_train_h, y_train_h)
     deco_print("Accuracy of high model is at: " + str(round(high_fit.score(X_test_h, y_test_h), 4)))
-    deco_print("ROCAUC score of high model is: " + str(round(roc_auc_score(y_test_h, high_fit.predict_proba(X_test_h)[:,1]), 4)))
-    low_fit = LogisticRegressionCV(random_state=0, max_iter=10000, class_weight="balanced").fit(X_train_l, y_train_l)
+    deco_print("ROCAUC score of high model is: " + str(
+        round(roc_auc_score(y_test_h, high_fit.predict_proba(X_test_h)[:, 1]), 4)))
+    low_fit = LogisticRegressionCV(cv=7, random_state=0, max_iter=10000, class_weight="balanced").fit(X_train_l, y_train_l)
     deco_print("Accuracy of low model is at: " + str(round(low_fit.score(X_test_l, y_test_l), 4)))
-    deco_print("ROCAUC score of low model is: " + str(round(roc_auc_score(y_test_l, low_fit.predict_proba(X_test_l)[:, 1]), 4)))
+    deco_print("ROCAUC score of low model is: " + str(
+        round(roc_auc_score(y_test_l, low_fit.predict_proba(X_test_l)[:, 1]), 4)))
     return high_fit, low_fit
 
 
 class Model:
-    def __init__(self, n=5, restart=False, alpha=0.01, date=None):
-        deco_print("creating model with n = "+str(n)+" restart = "+str(restart)+" and alpha = "+str(alpha) + "date" + str(date))
-        self.n = n
-        self.restart = restart
-        self.alpha = alpha
-        self.date = date
-        self.d_high, self.d_low = build_datasets(self.n, self.restart, self.alpha, self.date)
-        self.curr_date = datetime.today().strftime('%Y-%m-%d')
-        self.model_high_name = "model_high_alpha_" + str(alpha) + "_" + self.curr_date + ".joblib"
-        self.model_low_name = "model_low_alpha_" + str(alpha) + "_" + self.curr_date + ".joblib"
-        if self.restart or self.model_low_name not in listdir("models") or self.model_high_name not in listdir("models"):
-            self.model_high, self.model_low = train_models(self.d_high, self.d_low)
-            dump(self.model_high, "models/" + self.model_high_name)
-            dump(self.model_low, "models/" + self.model_low_name)
-        else:
-            self.model_high = load("models/" + self.model_high_name)
-            self.model_low = load("models/" + self.model_low_name)
+    def __init__(self, alpha, N, n, lot_size, start_cash, start_date, end_date):
+        deco_print(
+            f"Creating model with alpha = {alpha}, N = {N}, n = {n}, start date = {start_date}, end date = {end_date}")
+        self.n, self.N, self.alpha, self.lot_size, self.start_cash, self.start_date, self.end_date = n, N, alpha, lot_size, start_cash, start_date, end_date
+        self.d_high, self.d_low = build_datasets(self.n, self.N, self.alpha, self.start_date, self.end_date)
+        self.model_high, self.model_low = train_models(self.d_high, self.d_low)
 
+    def run_back_test(self):
+        """Executes backtest and returns dict."""
+        deco_print(f"Starting Backtest with lot size = {self.lot_size}, and starting cash = {self.start_cash}")
+        #could use model_high and model_low since its in the same time period.
+        return self.model_high
 
 # m = Model(n=5, restart=True)
 
