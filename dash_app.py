@@ -27,7 +27,8 @@ app = dash.Dash(__name__)
 app.layout = html.Div([
     # Section title
     html.Div([
-        html.H1('Strategy'),
+        html.H1("Section 1: Model Description"),
+        html.H2('Strategy'),
         html.P('This app explores a simple strategy that works as follows:'),
         html.Ol([
             html.Li([
@@ -37,6 +38,7 @@ app.layout = html.Div([
                     html.Li("IVV, QQQ, URTH, DJ: daily open, high, low, & close prices")
                 ])
             ]),
+            html.Br(),
             html.Li([
                 'Fit a linear trend line through the VWAP of each index/stock and record in a dataframe:',
                 html.Ul([
@@ -45,11 +47,13 @@ app.layout = html.Div([
                 ]),
                 '...for the fitted line.'
             ]),
+            html.Br(),
             html.Li(
                 'Add volatility of day-over-day log returns of IVV ' + \
                 'closing prices -- observed over the past N days -- to ' + \
-                'each historical data row in the FEATURES dataframe.'
+                'each historical data row in the FEATURES dataframe.', style={'width': '70%'}
             ),
+            html.Br(),
             html.Li(
                 'Add two RESPONSE data points to the historical FEATURES dataframe.' + \
                 'The RESPONSE data includes information that communicates ' + \
@@ -59,8 +63,9 @@ app.layout = html.Div([
                 'The second response includes information that communicates ' + \
                 'whether when, and how a limit order to BUY IVV at a ' + \
                 'price equal to (IVV  Close Price of Current Trading Day) * ' + \
-                '(1 - alpha) would have filled over the next n trading days.'
+                '(1 - alpha) would have filled over the next n trading days.', style={'width': '70%'}
             ),
+            html.Br(),
             html.Li(
                 'Using the features of a, b, of each index/stock and IVV vol alongside the ' + \
                 'RESPONSE data for the past N observed trading days, ' + \
@@ -69,8 +74,9 @@ app.layout = html.Div([
                 'Price of Current Trading Day) * (1 + alpha) would have ' + \
                 'filled over the next n trading days, and whether a limit order' + \
                 'to BUY IVV at a price equal to (IVV Close Price of Current Trading ' + \
-                'Day) * (1 - alpha) would have filled.'
+                'Day) * (1 - alpha) would have filled.', style={'width': '70%'}
             ),
+            html.Br(),
             html.Li(
                 'If the regression in 6. predicts TRUE for response 1, submit two trades:'),
             html.Ul([
@@ -83,6 +89,7 @@ app.layout = html.Div([
                     '(current trading day close price * (1+alpha)'
                 )
             ]),
+            html.Br(),
             html.Li(
                 'If the regression in 6. predicts TRUE for response 2, submit two trades:'),
             html.Ul([
@@ -95,25 +102,39 @@ app.layout = html.Div([
                     '(current trading day close price * (1-alpha)'
                 )
             ]),
+            html.Br(),
             html.Li(
                 'If the limit orders does not fill after n days, issue a ' + \
                 'market order to sell lot_size shares of IVV at close of ' + \
                 'the nth day.'
             )
-        ])
+        ]),
+        html.H2('Parameters'),
+                html.Ol([
+                    html.Li(["Alpha: profit seeking percentage (i.e. 5%)"]),
+                    html.Br(),
+                    html.Li(["N (time to close): time before market closes (i.e. 5)"]),
+                    html.Br(),
+                    html.Li(["n: window size (i.e. 3 days)"]),
+                    html.Br(),
+                    html.Li(["Lot Size: total number of shares in one trade (i.e. 50)"]),
+                    html.Br(),
+                    html.Li(["Starting crash: Initial value of total portfolio "]),
+                    html.Br(),
+                    html.Li(["Date: The date array for the trading algorithm"]),
+                ])
     ]),
     html.H1("Section 2: Modify Default Algo Parameters"),
     # Another line break
-    html.Br(),
     html.Div(
         [
             "Change parameters of current model: ",
             # Your text input object goes here:
-            html.Div(["Alpha: ", dcc.Input(id='alpha', value=0.01, type='number')]),
-            html.Div(["N: ", dcc.Input(id="N", value=10, type='number')]),
-            html.Div(["n: ", dcc.Input(id="n", value=5, type='number')]),
-            html.Div(["Lot Size: ", dcc.Input(id="lot_size", value=100, type='number')]),
-            html.Div(["Starting Cash: ", dcc.Input(id="start_cash", value=100000, type='number')]),
+            html.Div(["Alpha: ", dcc.Input(id='alpha', value=0.01, type='number')], style={'display':'table-cell','padding':3, 'verticalAlign':'middle'}),
+            html.Div(["N: ", dcc.Input(id="N", value=10, type='number')], style={'display':'table-cell','padding':3, 'verticalAlign':'middle'}),
+            html.Div(["n: ", dcc.Input(id="n", value=5, type='number')], style={ 'display':'table-cell','padding':3, 'verticalAlign':'middle'}),
+            html.Div(["Lot Size: ", dcc.Input(id="lot_size", value=100, type='number')], style={ 'display':'table-cell','padding':3, 'verticalAlign':'middle'}),
+            html.Div(["Starting Cash: ", dcc.Input(id="start_cash", value=100000, type='number')], style={'display':'table-cell','padding':3, 'verticalAlign':'middle'}),
             html.Div(["Date: ", dcc.DatePickerRange(
                 id='date',
                 min_date_allowed=date(2002, 8, 5),
@@ -121,7 +142,7 @@ app.layout = html.Div([
                 initial_visible_month=date(2021, 4, 1),
                 start_date=date(2019, 2, 5),
                 end_date=date(2021, 2, 5)
-            )]),
+            )])
         ],
         style={'display': 'inline-block'}
     ),
