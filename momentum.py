@@ -5,11 +5,7 @@ import numpy as np
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 from os import listdir
-from sklearn.utils import shuffle
-from joblib import dump, load
-from sklearn.linear_model import LogisticRegressionCV, LinearRegression
-from sklearn.metrics import roc_auc_score
-from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression, LinearRegression
 from time import sleep
 
 all_tickers = ["IVV", "QQQ", "URTH", "DIA"]
@@ -61,18 +57,16 @@ def calculate_volume_weighted_price(n, df):
 
 def fit_line(n, df, name):
     """Fits a line across the VWAPs of a stock to get slope and intercept on the last n days."""
-    a = []
-    b = []
+    a = [0]*n
+    b = [0]*n
     for i in range(n, len(df)):
         lr = LinearRegression().fit(np.arange(n).reshape(-1, 1), df["VWAP"][i - n:i])
         a_val, b_val = lr.coef_[0], lr.intercept_
         # a_val, b_val = np.polyfit(np.arange(n), df["VWAP"][i - n:i], 1)
         a.append(a_val)
         b.append(b_val)
-    # print(len(df))
-    # print(len(a)+len(np.zeros(n)))
-    df[name + "_a"] = np.append(np.zeros(n), np.array(a), axis=0)
-    df[name + "_b"] = np.append(np.zeros(n), np.array(b), axis=0)
+    df[name + "_a"] = np.array(a)
+    df[name + "_b"] = np.array(b)
     return df
 
 
@@ -94,7 +88,6 @@ def build_datasets(n, N, alpha, start_date, end_date):
             data_list[i] = data_list[i].merge(data_list[i - 1], on="Date", how="right")
         # collapse full_data list into singular dataset
     full_data = data_list[len(data_list) - 1]
-    back_test_data = full_data[['Date', 'High', 'Low', 'Close']]
     full_data["Low"] = full_data["Low"][::-1].shift(1).rolling(n).min()[::-1]
     # forward rolling isn't implemented in 'rolling'
     full_data["High"] = full_data["High"][::-1].shift(1).rolling(n).max()[::-1]
@@ -103,46 +96,39 @@ def build_datasets(n, N, alpha, start_date, end_date):
     full_data["isHigh"] = 1 * (full_data.next_high < full_data.High)
     full_data["isLow"] = 1 * (full_data.Low < full_data.next_low)
     full_data = full_data.iloc[N:len(full_data) - 1 - n]
-    back_test_data = back_test_data.iloc[N:len(back_test_data) - 1 - n]
     deco_print("number of signal 'high': " + str(np.sum(full_data.isHigh)))
     deco_print("number of signal 'low': " + str(np.sum(full_data.isLow)))
     full_data.to_csv("double_check_results.csv", index=False)
     full_data = full_data[
-        ["DJ_a", 'DJ_b', 'URTH_a', 'URTH_b', 'QQQ_a', 'QQQ_b', 'Vol', 'IVV_a', 'IVV_b', 'isHigh', 'isLow']]
-    train_high = full_data.drop("isLow", axis=1)
-    train_low = full_data.drop("isHigh", axis=1)
-    return train_high, train_low, back_test_data
+        ['Date', 'High', 'Low', 'Close', "DJ_a", 'DJ_b', 'URTH_a', 'URTH_b', 'QQQ_a', 'QQQ_b', 'Vol', 'IVV_a', 'IVV_b', 'isHigh', 'isLow']]
+    return full_data
 
 
-def split_data(df, col, split_ratio=0.2):
-    """Splits dataset off a split."""
-    X_train, X_test, Y_train, Y_test = train_test_split(df.drop(col, axis=1).values, df[col].values,
-                                                        test_size=split_ratio, random_state=10, stratify=df[col].values)
-    # split_index = int(len(df) * split_ratio)
-    # test_set = df.iloc[:split_index].drop(col, axis=1).values
-    # y_test = df.iloc[:split_index][col].values.astype(np.float)
-    # train_set = df.iloc[split_index:].drop(col, axis=1).values
-    # y_train = df.iloc[split_index:][col].values.astype(np.float)
-    return X_train, X_test, Y_train, Y_test
-
-
-def train_models(train_high, train_low):
-    """Trains the two glmnet models given the two datasets."""
-    deco_print("training high and low models")
-    train_high, train_low = shuffle(train_high, train_low, random_state=0)
-    X_train_h, X_test_h, y_train_h, y_test_h = split_data(train_high, 'isHigh')
-    X_train_l, X_test_l, y_train_l, y_test_l = split_data(train_low, 'isLow')
-    high_fit = LogisticRegressionCV(cv=7, random_state=0, max_iter=10000, class_weight="balanced").fit(X_train_h,
-                                                                                                       y_train_h)
-    deco_print("Accuracy of high model is at: " + str(round(high_fit.score(X_test_h, y_test_h), 4)))
-    deco_print("ROCAUC score of high model is: " + str(
-        round(roc_auc_score(y_test_h, high_fit.predict_proba(X_test_h)[:, 1]), 4)))
-    low_fit = LogisticRegressionCV(cv=7, random_state=0, max_iter=10000, class_weight="balanced").fit(X_train_l,
-                                                                                                      y_train_l)
-    deco_print("Accuracy of low model is at: " + str(round(low_fit.score(X_test_l, y_test_l), 4)))
-    deco_print("ROCAUC score of low model is: " + str(
-        round(roc_auc_score(y_test_l, low_fit.predict_proba(X_test_l)[:, 1]), 4)))
-    return high_fit, low_fit
+def get_predictions(ds, N):
+    high_pred, low_pred = [0]*(N+1), [0]*(N+1)
+    # extra columns 'Date', 'High', 'Low', 'Close'
+    for i in range(N+1, len(ds)):
+        h_data = ds.iloc[i-N-1: i-1, :]
+        today = ds.iloc[i, :]
+        x_test = h_data.drop(['Date', 'High', 'Low', 'Close', 'isHigh', 'isLow'], axis=1)
+        x_train = h_data.drop(['Date', 'High', 'Low', 'Close', 'isHigh', 'isLow'], axis=1)
+        y_train_high = h_data.isHigh
+        y_train_low = h_data.isLow
+        if sum(y_train_high) < 2:
+            high_pred.append(0)
+        elif sum(y_train_high) == N:
+            high_pred.append(1)
+        else:
+            high_model = LogisticRegression(solver='liblinear').fit(x_train, y_train_high)
+            high_pred.append(high_model.predict(x_test)[0])
+        if sum(y_train_low) < 2:
+            low_pred.append(0)
+        elif sum(y_train_low) == N:
+            low_pred.append(1)
+        else:
+            low_model = LogisticRegression(solver='liblinear').fit(x_train, y_train_low)
+            low_pred.append(low_model.predict(x_test)[0])
+    return np.array(high_pred), np.array(low_pred)
 
 
 class Model:
@@ -150,22 +136,17 @@ class Model:
         deco_print(
             f"Creating model with alpha = {alpha}, N = {N}, n = {n}, start date = {start_date}, end date = {end_date}")
         self.n, self.N, self.alpha, self.lot_size, self.start_cash, self.start_date, self.end_date = n, N, alpha, lot_size, start_cash, start_date, end_date
-        self.d_high, self.d_low, _ = build_datasets(self.n, self.N, self.alpha, self.start_date, self.end_date)
-        self.model_high, self.model_low = train_models(self.d_high, self.d_low)
+        self.close = build_datasets(self.n, self.N, self.alpha, self.start_date, self.end_date)
 
-    def run_back_test(self, start, end):
+    def run_back_test(self):
         """Executes backtest and returns dict."""
         deco_print(f"Starting Backtest with lot size = {self.lot_size}, and starting cash = {self.start_cash}")
-        d_high, d_low, close = build_datasets(self.n, self.N, self.alpha, start, end)
-        close["pred_high"] = self.model_high.predict(d_high.drop("isHigh", axis=1))
-        close["act_high"] = d_high["isHigh"]
-        close["pred_low"] = self.model_low.predict(d_low.drop("isLow", axis=1))
-        close["act_low"] = d_low["isLow"]
-        close = close.reset_index(drop=True)
-        del d_high
-        del d_low
+        self.close["pred_high"], self.close["pred_low"] = get_predictions(self.close, self.N)
+        self.close = self.close[self.N+1:]
+        self.close = self.close.reset_index(drop=True)
+
         balance = self.start_cash
-        deco_print(f"Backtesting a total of {len(close) - self.n} trading days.")
+        deco_print(f"Backtesting a total of {len(self.close) - self.n} trading days.")
 
         trade_ledger = {}  # columns: trade_ID, Date_created, Date_closed, Entry Price, Exit Price, Benchmark Entry, Benchmark Exit, Return on Trade, Benchmark Return
         trade_blotter = []  # trade_ID, Date_created, Action, Size, Symb, Order Price, Type, Status, Fill Price, Fill/Cancelled Date
@@ -175,13 +156,13 @@ class Model:
         buy_order = []  # [price, trade ID, i], i is when the limit trade was issued
         sell_order = []  # [price, trade ID, i]
         id_counter = 0
-        for i in range(len(close) - self.n):
+        for i in range(len(self.close) - self.n):
             if i % 10 == 0:
                 deco_print(f"Trading day {i}, liquid cash: ${round(balance, 2)}, total trades placed: {len(trade_blotter)}")
-            current_date = close.Date[i]
-            close_price = close.Close[i]
-            high_price = close.High[i]
-            low_price = close.Low[i]
+            current_date = self.close.Date[i]
+            close_price = self.close.Close[i]
+            high_price = self.close.High[i]
+            low_price = self.close.Low[i]
             limit_low = close_price * (1 - self.alpha)
             limit_high = close_price * (1 + self.alpha)
             if len(buy_order) > 0:
@@ -233,7 +214,7 @@ class Model:
                         del sell_order[j]
                     else:
                         j += 1
-            if close["pred_high"][i]:
+            if self.close["pred_high"][i]:
                 # market order to buy at close price then put limit order to sell
                 if shares >= 0:
                     shares += self.lot_size
@@ -255,7 +236,7 @@ class Model:
                     [id_counter, current_date, "SELL", self.lot_size, "IVV", limit_high, "LMT", "OPEN", None, None])
                 sell_order.append([limit_high, id_counter, i])  # keep id_counter same with limit orders
                 id_counter += 1
-            elif close["pred_low"][i]:
+            elif self.close["pred_low"][i]:
                 # market order to sell at close price then put limit order to buy
                 shares -= self.lot_size
                 balance += self.lot_size * close_price
@@ -311,3 +292,28 @@ class Model:
 #             round(np.sum(predictions == actual.reshape(len(actual), 1)) / len(actual), 4)) + "% with s_type= " + s_type)
 #     else:
 #         return predictions
+
+# def split_data(df, col, split_ratio=0.2):
+#     """Splits dataset off a split."""
+#     X_train, X_test, Y_train, Y_test = train_test_split(df.drop(col, axis=1).values, df[col].values,
+#                                                         test_size=split_ratio, random_state=10, stratify=df[col].values)
+#     return X_train, X_test, Y_train, Y_test
+#
+#
+# def train_models(train_high, train_low):
+#     """Trains the two glmnet models given the two datasets."""
+#     deco_print("training high and low models")
+#     train_high, train_low = shuffle(train_high, train_low, random_state=0)
+#     X_train_h, X_test_h, y_train_h, y_test_h = split_data(train_high, 'isHigh')
+#     X_train_l, X_test_l, y_train_l, y_test_l = split_data(train_low, 'isLow')
+#     high_fit = LogisticRegressionCV(cv=7, random_state=0, max_iter=10000, class_weight="balanced").fit(X_train_h,
+#                                                                                                        y_train_h)
+#     deco_print("Accuracy of high model is at: " + str(round(high_fit.score(X_test_h, y_test_h), 4)))
+#     deco_print("ROCAUC score of high model is: " + str(
+#         round(roc_auc_score(y_test_h, high_fit.predict_proba(X_test_h)[:, 1]), 4)))
+#     low_fit = LogisticRegressionCV(cv=7, random_state=0, max_iter=10000, class_weight="balanced").fit(X_train_l,
+#                                                                                                       y_train_l)
+#     deco_print("Accuracy of low model is at: " + str(round(low_fit.score(X_test_l, y_test_l), 4)))
+#     deco_print("ROCAUC score of low model is: " + str(
+#         round(roc_auc_score(y_test_l, low_fit.predict_proba(X_test_l)[:, 1]), 4)))
+#     return high_fit, low_fit

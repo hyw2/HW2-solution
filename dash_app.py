@@ -140,7 +140,7 @@ app.layout = html.Div([
                      style={'display': 'table-cell', 'padding': 3, 'verticalAlign': 'middle'}),
             html.Div(["Starting Cash: ", dcc.Input(id="start_cash", value=100000, type='number')],
                      style={'display': 'table-cell', 'padding': 3, 'verticalAlign': 'middle'}),
-            html.Div(["Model Train Dates: ", dcc.DatePickerRange(
+            html.Div(["Model Backtest Dates: ", dcc.DatePickerRange(
                 id='date',
                 min_date_allowed=date(2002, 8, 5),
                 max_date_allowed=datetime.today(),
@@ -148,14 +148,6 @@ app.layout = html.Div([
                 start_date=date(2015, 2, 5),
                 end_date=date(2020, 2, 5)
             )]),
-            html.Div(["Model Backtest Dates: ", dcc.DatePickerRange(
-                id='back_dates',
-                min_date_allowed=date(2002, 8, 5),
-                max_date_allowed=datetime.today(),
-                initial_visible_month=date(2021, 4, 1),
-                start_date=date(2020, 2, 5),
-                end_date=date(2021, 2, 5)
-            )])
         ],
         style={'display': 'inline-block'}
     ),
@@ -263,12 +255,11 @@ app.layout = html.Div([
      ],
     Input('submit-retrain', 'n_clicks'),
     [State('alpha', 'value'), State('N', 'value'), State('n', 'value'), State('lot_size', 'value'),
-     State('start_cash', 'value'), State('date', 'start_date'), State('date', 'end_date'),
-     State('back_dates', 'start_date'), State('back_dates', 'end_date')],
+     State('start_cash', 'value'), State('date', 'start_date'), State('date', 'end_date')],
     # name of pair, trade amount,
     prevent_initial_call=True
 )
-def back_test(n_clicks, alpha, N, n, lot_size, start_cash, start_date, end_date, bt_start, bt_end):
+def back_test(n_clicks, alpha, N, n, lot_size, start_cash, start_date, end_date):
     m = Model(alpha=alpha, N=N, n=n, lot_size=lot_size, start_cash=start_cash, start_date=start_date, end_date=end_date)
     df = pd.read_csv('data/IVV.csv')
     fig = go.Figure(
@@ -283,7 +274,7 @@ def back_test(n_clicks, alpha, N, n, lot_size, start_cash, start_date, end_date,
         ]
     )
     fig.update_layout(title="IVV Candlestick Plot")
-    ledger, blotter, portfolio = m.run_back_test(bt_start, bt_end)
+    ledger, blotter, portfolio = m.run_back_test()
     trade_ledger = ledger.to_dict('records')
     trade_ledger_columns = [
         dict(id="ID", name="Trade ID"),
@@ -338,7 +329,8 @@ def back_test(n_clicks, alpha, N, n, lot_size, start_cash, start_date, end_date,
         clean_ledger,
         title="Performance against Benchmark",
         x='Benchmark Return',
-        y='Return on Trade'
+        y='Return on Trade',
+        color="Position Type"
     )
     fig2.add_traces(go.Scatter(x=x_range, y=y_range, name='OLS Fit'))
     alpha = str(round(lin_reg.intercept_ * 100, 3)) + "% / trade"
