@@ -8,6 +8,7 @@ import plotly.express as px
 from dash_table import DataTable, FormatTemplate
 from dash.dependencies import Input, Output, State
 import pandas as pd
+import gc
 import pickle
 from datetime import date, datetime
 from time import sleep
@@ -130,7 +131,7 @@ app.layout = html.Div([
         [
             "Change parameters of current model: ",
             # Your text input object goes here:
-            html.Div(["Alpha: ", dcc.Input(id='alpha', value=0.01, type='number')],
+            html.Div(["Alpha: ", dcc.Input(id='alpha', value=0.03, type='number')],
                      style={'display': 'table-cell', 'padding': 3, 'verticalAlign': 'middle'}),
             html.Div(["N: ", dcc.Input(id="N", value=10, type='number')],
                      style={'display': 'table-cell', 'padding': 3, 'verticalAlign': 'middle'}),
@@ -145,8 +146,8 @@ app.layout = html.Div([
                 min_date_allowed=date(2002, 8, 5),
                 max_date_allowed=datetime.today(),
                 initial_visible_month=date(2021, 4, 1),
-                start_date=date(2015, 2, 5),
-                end_date=date(2020, 2, 5)
+                start_date=date(2018, 2, 5),
+                end_date=date(2021, 2, 5)
             )]),
         ],
         style={'display': 'inline-block'}
@@ -160,6 +161,7 @@ app.layout = html.Div([
         # Candlestick graph goes here:
         dcc.Graph(id='candlestick-graph', figure=fig)
     ]),
+    html.Div(id='backtest-output'),
     # Div to confirm what trade was made
     html.Div(
         [dcc.Graph(id='alpha-beta')],
@@ -251,7 +253,8 @@ app.layout = html.Div([
      Output('strategy-gmrr', 'children'),
      Output('strategy-trades-per-yr', 'children'),
      Output('strategy-vol', 'children'),
-     Output('strategy-sharpe', 'children')
+     Output('strategy-sharpe', 'children'),
+     Output('backtest-output', 'children')
      ],
     Input('submit-retrain', 'n_clicks'),
     [State('alpha', 'value'), State('N', 'value'), State('n', 'value'), State('lot_size', 'value'),
@@ -260,6 +263,7 @@ app.layout = html.Div([
     prevent_initial_call=True
 )
 def back_test(n_clicks, alpha, N, n, lot_size, start_cash, start_date, end_date):
+    gc.collect()
     m = Model(alpha=alpha, N=N, n=n, lot_size=lot_size, start_cash=start_cash, start_date=start_date, end_date=end_date)
     df = pd.read_csv('data/IVV.csv')
     fig = go.Figure(
@@ -274,7 +278,7 @@ def back_test(n_clicks, alpha, N, n, lot_size, start_cash, start_date, end_date)
         ]
     )
     fig.update_layout(title="IVV Candlestick Plot")
-    ledger, blotter, portfolio = m.run_back_test()
+    ledger, blotter, portfolio, final_msg = m.run_back_test()
     trade_ledger = ledger.to_dict('records')
     trade_ledger_columns = [
         dict(id="ID", name="Trade ID"),
@@ -291,7 +295,7 @@ def back_test(n_clicks, alpha, N, n, lot_size, start_cash, start_date, end_date)
              format=FormatTemplate.money(2)),
         dict(id="Return on Trade", name="Return on Trade", type='numeric',
              format=FormatTemplate.percentage(3)),
-        dict(id="Benchmark Return", name="Benchmark Return",
+        dict(id="Benchmark Return", name="Benchmark Return", type='numeric',
              format=FormatTemplate.percentage(3))
     ]
     trade_blotter = blotter.to_dict("records")
@@ -347,7 +351,11 @@ def back_test(n_clicks, alpha, N, n, lot_size, start_cash, start_date, end_date)
     sharpe = round(gmrr / vol, 3)
     gmrr_str = str(round(gmrr, 3))
     vol_str = str(round(vol, 3))
-    return trade_blotter, trade_blotter_columns, trade_portfolio, trade_portfolio_columns, trade_ledger, trade_ledger_columns, fig, fig2, alpha, beta, gmrr_str, avg_trades_per_yr, vol_str, sharpe
+    bal = start_cash
+    for i in clean_ledger['Benchmark Return']:
+        bal += lot_size * (1+i)
+    final_msg += f", Benchmark final balance ${round(bal, 2)}"
+    return trade_blotter, trade_blotter_columns, trade_portfolio, trade_portfolio_columns, trade_ledger, trade_ledger_columns, fig, fig2, alpha, beta, gmrr_str, avg_trades_per_yr, vol_str, sharpe, final_msg
 
 
 # Run it!

@@ -27,6 +27,7 @@ def find_nearest(array, value):
 
 def fetch_all_data(start_date, end_date):
     """Calls fetch_ticker_data to download new data of all five indexes using either a specified date or today."""
+    deco_print(f"fetching data between {start_date} and {end_date}")
     all_datasets = []
     for tick in all_tickers:
         if f"{ticker_names[tick]}.csv" in listdir("data"):
@@ -65,6 +66,9 @@ def fit_line(n, df, name):
         # a_val, b_val = np.polyfit(np.arange(n), df["VWAP"][i - n:i], 1)
         a.append(a_val)
         b.append(b_val)
+    print(n)
+    print(len(a))
+    print(df.shape)
     df[name + "_a"] = np.array(a)
     df[name + "_b"] = np.array(b)
     return df
@@ -72,7 +76,7 @@ def fit_line(n, df, name):
 
 def build_datasets(n, N, alpha, start_date, end_date):
     """Builds the training dataset for the model."""
-    deco_print("building dataset. checking for existing files")
+    deco_print(f"building dataset. checking for existing files with start date {start_date}, and end date {end_date}")
     data_list = fetch_all_data(start_date, end_date)
     for i in range(len(data_list)):
         data_list[i] = calculate_volume_weighted_price(N, data_list[i])
@@ -179,7 +183,7 @@ class Model:
                             shares += self.lot_size
                             short_price = short_prices.pop(0)
                             balance -= self.lot_size * buy_price
-                            balance += self.lot_size * (short_price - buy_price)
+                            # balance += self.lot_size * (short_price - buy_price)
                         trade_blotter[trade_ID][9] = current_date
                         trade_blotter[trade_ID][8] = buy_price
                         trade_blotter[trade_ID][7] = "FILLED"
@@ -223,7 +227,7 @@ class Model:
                     shares += self.lot_size
                     short_price = short_prices.pop(0)
                     balance -= self.lot_size * close_price
-                    balance += self.lot_size * (short_price - close_price)
+                    # balance += self.lot_size * (short_price - close_price)
                 # columns: trade_ID, Date_created, Action, Size, Symb, Order Price, Type, Status, Fill Price, Fill/Cancelled Date
                 trade_blotter.append(
                     [id_counter, current_date, "BUY", self.lot_size, "IVV", close_price, "MKT", "FILLED", close_price,
@@ -269,9 +273,9 @@ class Model:
         portfolio = pd.DataFrame(portfolio_ledger,
                                  columns=["Date", "Cash", "Num Shares", "Share total Value", "Total Port Value"])
         portfolio.to_csv("portfolio.csv", index=False)
-        deco_print(
-            f"Final Account balance at: ${round(portfolio['Total Port Value'][len(portfolio_ledger) - 1], 2)}, total trades placed: {len(ledger)}")
-        return ledger, blotter, portfolio
+        final = f"Final account balance at: ${round(portfolio['Total Port Value'][len(portfolio_ledger) - 1], 2)}, total trades placed: {len(ledger)}"
+        deco_print(final)
+        return ledger, blotter, portfolio, final
 
 # m = Model(n=5, restart=True)
 
