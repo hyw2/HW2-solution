@@ -341,6 +341,8 @@ def back_test(n_clicks, alpha, N, n, lot_size, start_cash, start_date, end_date)
     beta = round(lin_reg.coef_[0], 3)
     gmrr = (clean_ledger['Return on Trade'] + 1).product() ** (
             1 / len(clean_ledger)) - 1
+    bench_gmr = (clean_ledger['Benchmark Return'] + 1).product() ** (
+            1 / len(clean_ledger)) - 1
     avg_trades_per_yr = round(
         clean_ledger['Date Created'].groupby(
             pd.DatetimeIndex(clean_ledger['Date Created']).year
@@ -354,7 +356,7 @@ def back_test(n_clicks, alpha, N, n, lot_size, start_cash, start_date, end_date)
     bal = start_cash
     for i in clean_ledger['Benchmark Return']:
         bal += lot_size * (1+i)
-    final_msg += f", Benchmark final balance ${round(bal, 2)}"
+    final_msg += f" with GMMR {round(gmrr*100, 2)}%, Benchmark final balance ${round(bal, 2)} with GMMR {round(bench_gmr*100, 2)}%"
     return trade_blotter, trade_blotter_columns, trade_portfolio, trade_portfolio_columns, trade_ledger, trade_ledger_columns, fig, fig2, alpha, beta, gmrr_str, avg_trades_per_yr, vol_str, sharpe, final_msg
 
 
