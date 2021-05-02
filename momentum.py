@@ -34,13 +34,12 @@ def fetch_all_data(start_date, end_date):
             df = pd.read_csv(f"data/{ticker_names[tick]}.csv")
             if df.Date[0] > start_date or df.Date[len(df) - 1] < end_date:
                 df = pdr.get_data_yahoo(tick, start=start_date, end=end_date)
+                df.to_csv(f"data/{ticker_names[tick]}.csv")
             else:
-                df = df.loc[find_nearest(df.Date, start_date): find_nearest(df.Date, end_date)]
-            df.to_csv(f"data/{ticker_names[tick]}.csv")
+                df = df[(df.Date >= start_date) & (df.Date <= end_date)]
         else:
             df = pdr.get_data_yahoo(tick, start=start_date, end=end_date)
             df.to_csv(f"data/{ticker_names[tick]}.csv")
-        df = pd.read_csv(f"data/{ticker_names[tick]}.csv")  # some weird error when adding new dataset doesn't work
         all_datasets.append(df)
     return all_datasets
 
@@ -66,12 +65,63 @@ def fit_line(n, df, name):
         # a_val, b_val = np.polyfit(np.arange(n), df["VWAP"][i - n:i], 1)
         a.append(a_val)
         b.append(b_val)
-    print(n)
-    print(len(a))
-    print(df.shape)
+    if len(a) != len(df):
+        print('n', n)
+        print('length of a array', len(a))
+        print('shape of dataframe', df.shape)
+        print(name)
+        print(df.head())
     df[name + "_a"] = np.array(a)
     df[name + "_b"] = np.array(b)
     return df
+
+
+def get_exits(ds, n):
+    high_exit_prices = []
+    high_exit_date = []
+    low_exit_prices = []
+    low_exit_date = []
+
+    for i in range(len(ds) - n):
+        high_price = np.nan
+        high_date = ds.Date[i]
+        low_price = np.nan
+        low_date = ds.Date[i]
+        if ds.isHigh[i]:
+            j = i
+            entry = ds.next_high[i]
+            while j < j+n+1:
+                if ds.High[j] > entry:
+                    high_price = entry
+                    high_date = ds.Date[j]
+                    break
+                j += 1
+            if np.isnan(high_price):  # set price to close
+                high_price = ds.Close[j]
+                high_date = ds.Date[j]
+        if ds.isLow[i]:
+            j = i
+            entry = ds.next_low[i]
+            while j < j+n+1:
+                if ds.Low[j] < entry:
+                    low_price = entry
+                    low_date = ds.Date[j]
+                    break
+                j += 1
+            if np.isnan(low_price):
+                low_price = ds.Close[j]
+                low_date = ds.Date[j]
+        high_exit_prices.append(high_price)
+        high_exit_date.append(high_date)
+        low_exit_prices.append(low_price)
+        low_exit_date.append(low_date)
+    empty = np.empty(n)
+    empty[:] = np.nan
+    ds["high_exit_prices"] = np.concatenate((np.array(high_exit_prices), empty), axis=0)
+    ds["high_exit_date"] = np.concatenate((np.array(high_exit_date), empty), axis=0)
+    ds["low_exit_prices"] = np.concatenate((np.array(low_exit_prices), empty), axis=0)
+    ds["low_exit_date"] = np.concatenate((np.array(low_exit_date), empty), axis=0)
+    return ds
 
 
 def build_datasets(n, N, alpha, start_date, end_date):
@@ -92,19 +142,21 @@ def build_datasets(n, N, alpha, start_date, end_date):
             data_list[i] = data_list[i].merge(data_list[i - 1], on="Date", how="right")
         # collapse full_data list into singular dataset
     full_data = data_list[len(data_list) - 1]
-    full_data["Low"] = full_data["Low"][::-1].shift(1).rolling(n).min()[::-1]
+    full_data["mod_Low"] = full_data["Low"][::-1].shift(1).rolling(n).min()[::-1]
     # forward rolling isn't implemented in 'rolling'
-    full_data["High"] = full_data["High"][::-1].shift(1).rolling(n).max()[::-1]
+    full_data["mod_High"] = full_data["High"][::-1].shift(1).rolling(n).max()[::-1]
     full_data["next_high"] = full_data["Close"] * (1 + alpha)
     full_data["next_low"] = full_data["Close"] * (1 - alpha)
-    full_data["isHigh"] = 1 * (full_data.next_high < full_data.High)
-    full_data["isLow"] = 1 * (full_data.Low < full_data.next_low)
+    full_data["isHigh"] = 1 * (full_data.next_high < full_data.mod_High)
+    full_data["isLow"] = 1 * (full_data.mod_Low < full_data.next_low)
     full_data = full_data.iloc[N:len(full_data) - 1 - n]
     deco_print("number of signal 'high': " + str(np.sum(full_data.isHigh)))
     deco_print("number of signal 'low': " + str(np.sum(full_data.isLow)))
+    full_data = full_data.reset_index(drop=True)
+    full_data = get_exits(full_data, n)  # gets all the exit data from the positions
     full_data.to_csv("double_check_results.csv", index=False)
     full_data = full_data[
-        ['Date', 'High', 'Low', 'Close', "DJ_a", 'DJ_b', 'URTH_a', 'URTH_b', 'QQQ_a', 'QQQ_b', 'Vol', 'IVV_a', 'IVV_b', 'isHigh', 'isLow']]
+        ['Date', 'High', 'Low', 'Close', "DJ_a", 'DJ_b', 'URTH_a', 'URTH_b', 'QQQ_a', 'QQQ_b', 'Vol', 'IVV_a', 'IVV_b', 'isHigh', 'isLow', 'high_exit_prices', 'high_exit_date', 'low_exit_prices', 'low_exit_date']]
     return full_data
 
 
@@ -112,25 +164,34 @@ def get_predictions(ds, N):
     high_pred, low_pred = [0]*(N+1), [0]*(N+1)
     # extra columns 'Date', 'High', 'Low', 'Close'
     for i in range(N+1, len(ds)):
-        h_data = ds.iloc[i-N-1: i-1, :]
-        today = ds.iloc[i, :]
-        x_test = h_data.drop(['Date', 'High', 'Low', 'Close', 'isHigh', 'isLow'], axis=1)
-        x_train = h_data.drop(['Date', 'High', 'Low', 'Close', 'isHigh', 'isLow'], axis=1)
+        data = ds.iloc[:i-1, :]
+        h_data = data.drop(['low_exit_prices', 'low_exit_date'], axis=1)
+        l_data = data.drop(['high_exit_prices', 'high_exit_date'], axis=1)
+        h_data = h_data[h_data.high_exit_date < ds.Date[i-1]].tail(N+5)
+        l_data = l_data[l_data.low_exit_date < ds.Date[i-1]].tail(N+5)
+
+        x_train_high = h_data.drop(['Date', 'High', 'Low', 'Close', 'isHigh', 'isLow', 'high_exit_prices', 'high_exit_date'], axis=1)
+        x_train_low = l_data.drop(['Date', 'High', 'Low', 'Close', 'isHigh', 'isLow', 'low_exit_prices', 'low_exit_date'], axis=1)
         y_train_high = h_data.isHigh
-        y_train_low = h_data.isLow
+        y_train_low = l_data.isLow
+        today = ds.iloc[i].values
+        x_test = today[[4, 5, 6, 7, 8, 9, 10, 11, 12]]  # only get variable data
+        x_test = x_test.reshape(1, -1)
+        # print(sum(y_train_low), len(y_train_low))
+        # print(sum(y_train_high), len(y_train_high))
         if sum(y_train_high) < 2:
             high_pred.append(0)
-        elif sum(y_train_high) == N:
+        elif sum(y_train_high) == len(y_train_high):
             high_pred.append(1)
         else:
-            high_model = LogisticRegression(solver='liblinear').fit(x_train, y_train_high)
+            high_model = LogisticRegression(solver='liblinear').fit(x_train_high, y_train_high)
             high_pred.append(high_model.predict(x_test)[0])
         if sum(y_train_low) < 2:
             low_pred.append(0)
-        elif sum(y_train_low) == N:
+        elif sum(y_train_low) == len(y_train_low):
             low_pred.append(1)
         else:
-            low_model = LogisticRegression(solver='liblinear').fit(x_train, y_train_low)
+            low_model = LogisticRegression(solver='liblinear').fit(x_train_low, y_train_low)
             low_pred.append(low_model.predict(x_test)[0])
     return np.array(high_pred), np.array(low_pred)
 
@@ -146,6 +207,7 @@ class Model:
         """Executes backtest and returns dict."""
         deco_print(f"Starting Backtest with lot size = {self.lot_size}, and starting cash = {self.start_cash}")
         self.close["pred_high"], self.close["pred_low"] = get_predictions(self.close, self.N)
+        self.close.to_csv("full_predictions.csv")
         self.close = self.close[self.N+1:]
         self.close = self.close.reset_index(drop=True)
 
@@ -173,17 +235,11 @@ class Model:
                 j = 0
                 while j < len(buy_order):
                     buy_price, trade_ID, day_issued = buy_order[j][0], buy_order[j][1], buy_order[j][2]
-                    if high_price > buy_price > low_price or day_issued < i - self.n:
-                        if day_issued < i - self.n:
+                    if buy_price > low_price or day_issued == i - self.n:
+                        if day_issued == i - self.n and not (buy_price > low_price):
                             buy_price = close_price
-                        if shares >= 0:
-                            shares += self.lot_size
-                            balance -= self.lot_size * buy_price
-                        else:  # this buy will cover the short position
-                            shares += self.lot_size
-                            short_price = short_prices.pop(0)
-                            balance -= self.lot_size * buy_price
-                            # balance += self.lot_size * (short_price - buy_price)
+                        shares += self.lot_size
+                        balance -= self.lot_size * buy_price
                         trade_blotter[trade_ID][9] = current_date
                         trade_blotter[trade_ID][8] = buy_price
                         trade_blotter[trade_ID][7] = "FILLED"
@@ -200,8 +256,8 @@ class Model:
                 while j < len(sell_order):
                     sell_price, trade_ID, day_issued = sell_order[j][0], sell_order[j][1], sell_order[j][2]
                     # print(f"sell price {sell_price}, trade_id {trade_ID}, day_issued {day_issued}")
-                    if high_price > sell_price > low_price or day_issued < i - self.n:
-                        if day_issued < i - self.n:
+                    if high_price > sell_price or day_issued == i - self.n:
+                        if day_issued == i - self.n and not (high_price > sell_price):
                             sell_price = close_price
                         shares -= self.lot_size
                         balance += self.lot_size * sell_price
@@ -220,14 +276,8 @@ class Model:
                         j += 1
             if self.close["pred_high"][i]:
                 # market order to buy at close price then put limit order to sell
-                if shares >= 0:
-                    shares += self.lot_size
-                    balance -= self.lot_size * close_price
-                else:  # this buy will cover the short position
-                    shares += self.lot_size
-                    short_price = short_prices.pop(0)
-                    balance -= self.lot_size * close_price
-                    # balance += self.lot_size * (short_price - close_price)
+                shares += self.lot_size
+                balance -= self.lot_size * close_price
                 # columns: trade_ID, Date_created, Action, Size, Symb, Order Price, Type, Status, Fill Price, Fill/Cancelled Date
                 trade_blotter.append(
                     [id_counter, current_date, "BUY", self.lot_size, "IVV", close_price, "MKT", "FILLED", close_price,
@@ -244,8 +294,8 @@ class Model:
                 # market order to sell at close price then put limit order to buy
                 shares -= self.lot_size
                 balance += self.lot_size * close_price
-                if shares <= 0:
-                    short_prices.append(close_price)
+                # if shares <= 0:
+                #     short_prices.append(close_price)
                 trade_blotter.append(
                     [id_counter, current_date, "SELL", self.lot_size, "IVV", close_price, "MKT", "FILLED", close_price,
                      current_date])
